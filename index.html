@@ -260,6 +260,9 @@ let quarter=1,clockSec=240,clockRunning=false;
 let possession='navy'; // who has the ball
 let streak={navy:0,orange:0}; // consecutive scores
 let onFire={navy:false,orange:false};
+let playerTeam='navy'; // the human player's team — set randomly each game
+let controlledPlayer='navy1'; // which player the human controls right now
+let defenseControlled='navy1'; // locked defense player — never changes on defense
 
 // Court dimensions
 function courtTop(){return H*0.13+32;}
@@ -310,36 +313,43 @@ function initPlayers(){
   const ft=courtTop(),fb=courtBot(),fl=courtLeft(),fr=courtRight();
   const ch=fb-ft,cw=fr-fl;
   players={
-    navy1:{x:fl+cw*0.35,y:ft+ch*0.4,w:16,h:30,bodyColor:'#4A90D9',helmetColor:'#001f5b',pantsColor:'#001a3d',team:'navy',id:'navy1',hasBall:true,vx:0,vy:0,facing:1,jumping:false,jumpH:0,number:'4'},
+    navy1:{x:fl+cw*0.35,y:ft+ch*0.4,w:16,h:30,bodyColor:'#4A90D9',helmetColor:'#001f5b',pantsColor:'#001a3d',team:'navy',id:'navy1',hasBall:false,vx:0,vy:0,facing:1,jumping:false,jumpH:0,number:'4'},
     navy2:{x:fl+cw*0.25,y:ft+ch*0.65,w:16,h:30,bodyColor:'#4A90D9',helmetColor:'#001f5b',pantsColor:'#001a3d',team:'navy',id:'navy2',hasBall:false,vx:0,vy:0,facing:1,jumping:false,jumpH:0,number:'8'},
     orange1:{x:fl+cw*0.65,y:ft+ch*0.4,w:16,h:30,bodyColor:'#FF6B00',helmetColor:'#7a2800',pantsColor:'#5a2000',team:'orange',id:'orange1',hasBall:false,vx:0,vy:0,facing:-1,jumping:false,jumpH:0,number:'3'},
     orange2:{x:fl+cw*0.75,y:ft+ch*0.65,w:16,h:30,bodyColor:'#FF6B00',helmetColor:'#7a2800',pantsColor:'#5a2000',team:'orange',id:'orange2',hasBall:false,vx:0,vy:0,facing:-1,jumping:false,jumpH:0,number:'7'},
   };
-  ballHolder=possession==='navy'?'navy1':'orange1';
-  players[ballHolder].hasBall=true;
-  ball={x:players[ballHolder].x,y:players[ballHolder].y,r:7};
+  // Ball starts with first player of possession team
+  const startHolder=possession==='navy'?'navy1':'orange1';
+  players[startHolder].hasBall=true;
+  ballHolder=startHolder;
+  ball={x:players[startHolder].x,y:players[startHolder].y,r:7};
   ballInAir=false;passInFlight=false;alleyInFlight=false;ballBouncing=false;
-  defenseMode=(possession==='orange');
+
+  // Set controlled player: player1 of their team on offense, player1 on defense
+  controlledPlayer=playerTeam+'1';
+  defenseControlled=playerTeam+'1';
+
   updateButtons();
 }
 
 // ---- BUTTON VISIBILITY ----
 function updateButtons(){
-  const off=possession==='navy';
+  const off=possession===playerTeam;
   document.getElementById('bshoot').style.display=off?'flex':'none';
   document.getElementById('bpass').style.display=off?'flex':'none';
   document.getElementById('balley').style.display=off?'flex':'none';
   document.getElementById('bsteal').style.display=off?'flex':'none';
   document.getElementById('bblock').style.display=off?'flex':'none';
   document.getElementById('bjump').style.display=off?'none':'flex';
-  // Alley oop - check if teammate near hoop
   updateAlleyAvail();
 }
 
 function updateAlleyAvail(){
-  if(possession!=='navy')return;
+  if(possession!==playerTeam)return;
   const hoop=attackHoop();
-  const mate=players['navy2'];
+  const mateId=playerTeam+'2';
+  if(!players[mateId])return;
+  const mate=players[mateId];
   const d=dist(mate,hoop);
   const avail=d<80;
   document.getElementById('balley').classList.toggle('disabled',!avail);
@@ -571,6 +581,20 @@ function drawPlayer(p){
     ctx.fillText('🔥',0,jerseyTop-headR-6);
   }
 
+  // Green arrow above controlled player
+  const isControlled = (possession===playerTeam && p.id===controlledPlayer) ||
+                       (possession!==playerTeam && p.id===defenseControlled);
+  if(isControlled){
+    const arrowY=jerseyTop-headR-18;
+    ctx.fillStyle='#00ff88';
+    ctx.beginPath();
+    ctx.moveTo(0,arrowY+8);
+    ctx.lineTo(-6,arrowY);
+    ctx.lineTo(6,arrowY);
+    ctx.closePath();ctx.fill();
+    ctx.fillRect(-2,arrowY-6,4,7);
+  }
+
   ctx.restore();
 }
 
@@ -595,10 +619,9 @@ function drawBall(){
         completeCatch(passTarget);
       }
     }
-    // Out of bounds
-    if(passX<courtLeft()||passX>courtRight()||passY<courtTop()||passY>courtBot()){
-      passInFlight=false;
-      turnover('navy2');
+    // Out of bounds check for passes
+    if(passX<courtLeft()-10||passX>courtRight()+10||passY<courtTop()-10||passY>courtBot()+10){
+      outOfBounds();
     }
   } else if(alleyInFlight){
     passX+=passVX;passY+=passVY*0.9;
@@ -619,13 +642,17 @@ function drawBall(){
     if(bounceY>courtBot()-8){bounceY=courtBot()-8;bounceVY*=-0.45;if(Math.abs(bounceVY)<1)ballBouncing=false;sfxBounce();}
     ball.x=bounceX;ball.y=bounceY;
     bx=bounceX;by=bounceY;
-    // Pickup check
+    // Pickup check — any player can grab a loose ball
     Object.values(players).forEach(p=>{
       if(Math.sqrt((p.x-bx)**2+(p.y-by)**2)<30){
         giveBallTo(p.id,p.team);
         ballBouncing=false;
       }
     });
+    // Loose ball out of bounds
+    if(bounceX<courtLeft()||bounceX>courtRight()||bounceY<courtTop()||bounceY>courtBot()){
+      outOfBounds();
+    }
   }
 
   if(ballInAir||passInFlight||alleyInFlight||ballBouncing){
@@ -733,17 +760,20 @@ function executeAlleyDunk(player,hoop){
 
 // ---- PASS ----
 function doPass(){
-  if(ballInAir||passInFlight||!players[ballHolder].hasBall)return;
-  const p=players[ballHolder];
-  const mate=players[possession==='navy'?'navy2':'navy1'];
+  if(ballInAir||passInFlight||alleyInFlight)return;
+  const holder=players[ballHolder];
+  if(!holder||!holder.hasBall)return;
+  // Find teammate (other player on same team)
+  const mateId=ballHolder.endsWith('1')?holder.team+'2':holder.team+'1';
+  const mate=players[mateId];
   if(!mate)return;
-  p.hasBall=false;
+  holder.hasBall=false;
   passInFlight=true;
   passTarget=mate;
-  passX=p.x;passY=p.y;
-  const dx=mate.x-p.x,dy=mate.y-p.y;
-  const d=Math.sqrt(dx*dx+dy*dy);
-  const spd=7+d*0.02;
+  passX=holder.x;passY=holder.y;
+  const dx=mate.x-holder.x,dy=mate.y-holder.y;
+  const d=Math.sqrt(dx*dx+dy*dy)||1;
+  const spd=8;
   passVX=(dx/d)*spd;passVY=(dy/d)*spd;
   sfxBounce();
 }
@@ -754,13 +784,41 @@ function completeCatch(target){
   target.hasBall=true;
   ballHolder=target.id;
   ball.x=target.x;ball.y=target.y;
+  // If human's teammate caught it, switch control to them
+  if(target.team===playerTeam){
+    controlledPlayer=target.id;
+  }
   sfxBounce();
   updateAlleyAvail();
 }
 
+function outOfBounds(){
+  // Give ball to the OTHER team at their own free throw line
+  passInFlight=false;
+  alleyInFlight=false;
+  ballInAir=false;
+  ballBouncing=false;
+  const newPoss=possession==='navy'?'orange':'navy';
+  inboundAt(newPoss);
+  showFlash('OUT OF BOUNDS',70);
+}
+
+function inboundAt(team){
+  const fl=courtLeft(),fr=courtRight();
+  const keyW=courtW()*0.18;
+  // Free throw line position: left key end or right key end, center height
+  const ftX=team==='navy'?(fl+keyW):(fr-keyW);
+  const ftY=courtTop()+courtH()*0.5;
+  const p1=players[team+'1'];
+  p1.x=ftX;p1.y=ftY;
+  possession=team;
+  giveBallTo(team+'1',team);
+}
+
 function doAlleyOop(){
   if(ballInAir||alleyInFlight||!players[ballHolder].hasBall)return;
-  const mate=players[possession==='navy'?'navy2':'navy1'];
+  const mateId=playerTeam+'2';
+  const mate=players[mateId];
   const hoop=attackHoop();
   if(dist(mate,hoop)>100){showFlash('GET CLOSER!',60);return;}
   const p=players[ballHolder];
@@ -768,7 +826,7 @@ function doAlleyOop(){
   alleyInFlight=true;
   passX=p.x;passY=p.y;
   const dx=hoop.x-p.x,dy=hoop.y-p.y;
-  const d=Math.sqrt(dx*dx+dy*dy);
+  const d=Math.sqrt(dx*dx+dy*dy)||1;
   passVX=(dx/d)*5;passVY=(dy/d)*4.5;
   sfxBounce();
 }
@@ -777,10 +835,9 @@ function doAlleyOop(){
 function doSteal(){
   if(stealCooldown>0)return;
   stealCooldown=90;
-  // Find nearest opponent with ball
-  const opp=Object.values(players).find(p=>p.team!==possession&&p.hasBall);
+  const opp=Object.values(players).find(p=>p.team!==playerTeam&&p.hasBall);
   if(!opp)return;
-  const me=players[possession==='navy'?'orange1':'navy1'];
+  const me=players[defenseControlled];
   if(dist(me,opp)<55){
     sfxSteal();
     opp.hasBall=false;
@@ -797,7 +854,7 @@ function doBlock(){
   if(blockCooldown>0)return;
   blockCooldown=70;
   if(!ballInAir)return;
-  const me=players[possession==='navy'?'orange1':'navy1'];
+  const me=players[defenseControlled];
   if(dist(me,{x:ball.x,y:ball.y})<70){
     sfxBlock();
     ballInAir=false;
@@ -812,7 +869,7 @@ function doBlock(){
 }
 
 function doJump(){
-  const me=players[possession==='navy'?'orange1':'navy1'];
+  const me=players[defenseControlled];
   me.jumping=true;me.jumpH=0;
   let jt=0;
   const ji=setInterval(()=>{
@@ -827,15 +884,15 @@ function giveBallTo(id,team){
   ballHolder=id;
   ball.x=players[id].x;ball.y=players[id].y;
   possession=team;
-  defenseMode=(possession==='orange');
+  // Update controlled player: on offense switch to ball carrier if they're on human's team
+  if(team===playerTeam){
+    controlledPlayer=id;
+  }
   updateButtons();
 }
 
-function turnover(toPlayer){
-  const p=players[toPlayer]||players['orange1'];
-  giveBallTo(p.id,p.team);
-  possession=p.team;
-  updateButtons();
+function turnover(toTeam){
+  inboundAt(toTeam||'navy');
 }
 
 // ---- SCORE ----
@@ -856,15 +913,10 @@ function scoreBasket(pts,isAlley=false){
   showFlash(msg,120);
   launchConfetti(attackHoop().x,attackHoop().y);
   updateScoreboard();
-  // Inbound — give ball to other team
+  // Inbound — give ball to other team at their free throw line
   setTimeout(()=>{
-    possession=possession==='navy'?'orange':'navy';
-    const inbounder=possession==='navy'?'navy1':'orange1';
-    const ft=courtTop(),fb=courtBot(),fl=courtLeft(),fr=courtRight();
-    players[inbounder].x=possession==='navy'?fl+courtW()*0.3:fr-courtW()*0.3;
-    players[inbounder].y=ft+courtH()*0.5;
-    giveBallTo(inbounder,possession);
-    updateButtons();
+    const newPoss=possession==='navy'?'orange':'navy';
+    inboundAt(newPoss);
   },1500);
 }
 
@@ -889,74 +941,98 @@ function updateBallArc(){
 
 // ---- AI ----
 function updateAI(){
+  const aiTeam=playerTeam==='navy'?'orange':'navy'; // AI always controls the other team
   const offTeam=possession;
-  const defTeam=offTeam==='navy'?'orange':'navy';
-  const o1=players[offTeam+'1'],o2=players[offTeam+'2'];
-  const d1=players[defTeam+'1'],d2=players[defTeam+'2'];
   const hoop=attackHoop();
-
   aiTimer++;
 
-  // Offensive AI - navy2 / teammate runs routes
-  const offMate=players[offTeam==='navy'?'navy2':'orange2'];
-  if(!offMate.hasBall){
-    // Run toward hoop or open space
+  // AI offensive teammate (human team's mate also gets AI movement when not ball carrier)
+  // Human team mate (not controlled) runs cuts
+  const humanMateId=playerTeam==='navy'?'navy2':'orange2';
+  const humanMate=players[humanMateId];
+  if(humanMate&&humanMate.id!==controlledPlayer&&!humanMate.hasBall){
     const tx=hoop.x+(Math.sin(aiTimer*0.03)*60);
     const ty=hoop.y+(Math.cos(aiTimer*0.04)*50);
-    const dx=tx-offMate.x,dy=ty-offMate.y;
-    const d=Math.sqrt(dx*dx+dy*dy);
-    if(d>5){offMate.x+=dx/d*1.8;offMate.y+=dy/d*1.8;}
-    offMate.vx=dx/d*1.8;offMate.vy=dy/d*1.8;
-    offMate.facing=offMate.vx>0?1:-1;
+    const dx=tx-humanMate.x,dy=ty-humanMate.y;
+    const d=Math.sqrt(dx*dx+dy*dy)||1;
+    humanMate.x+=dx/d*1.8;humanMate.y+=dy/d*1.8;
+    humanMate.vx=dx/d*1.8;humanMate.vy=dy/d*1.8;
+    humanMate.facing=humanMate.vx>0?1:-1;
+    humanMate.x=Math.max(courtLeft()+8,Math.min(courtRight()-8,humanMate.x));
+    humanMate.y=Math.max(courtTop()+8,Math.min(courtBot()-8,humanMate.y));
   }
 
-  // Defensive AI - chase ball
-  [d1,d2].forEach((def,i)=>{
-    const tgt=i===0?(o1.hasBall?o1:o2):(o2.hasBall?o2:o1);
-    const dx=tgt.x-def.x,dy=tgt.y-def.y;
-    const d=Math.sqrt(dx*dx+dy*dy);
-    if(d>8){
-      const spd=1.6;
-      def.x+=dx/d*spd;def.y+=dy/d*spd;
-      def.vx=dx/d*spd;def.vy=dy/d*spd;
-      def.facing=def.vx>0?1:-1;
-    }
-    // Clamp to court
-    def.x=Math.max(courtLeft()+10,Math.min(courtRight()-10,def.x));
-    def.y=Math.max(courtTop()+10,Math.min(courtBot()-10,def.y));
-  });
+  // AI team both players — offense and defense
+  const ai1=players[aiTeam+'1'],ai2=players[aiTeam+'2'];
 
-  // AI opponent shoots
-  if(possession==='orange'&&!ballInAir&&!passInFlight){
-    const carrier=o1.hasBall?o1:o2;
-    if(carrier&&carrier.hasBall){
-      const dToHoop=dist(carrier,hoop);
-      if(dToHoop<80&&aiTimer%90===0){
+  if(possession===aiTeam){
+    // AI on offense — one player has ball, other cuts
+    const carrier=ai1.hasBall?ai1:ai2;
+    const cutter=ai1.hasBall?ai2:ai1;
+    // Cutter runs toward hoop
+    const cx=hoop.x+(Math.sin(aiTimer*0.025)*50);
+    const cy=hoop.y+(Math.cos(aiTimer*0.03)*60);
+    const cdx=cx-cutter.x,cdy=cy-cutter.y;
+    const cd=Math.sqrt(cdx*cdx+cdy*cdy)||1;
+    cutter.x+=cdx/cd*1.9;cutter.y+=cdy/cd*1.9;
+    cutter.facing=cutter.vx>0?1:-1;
+    cutter.x=Math.max(courtLeft()+8,Math.min(courtRight()-8,cutter.x));
+    cutter.y=Math.max(courtTop()+8,Math.min(courtBot()-8,cutter.y));
+
+    // Carrier moves toward hoop
+    if(carrier){
+      const dh=dist(carrier,hoop);
+      const mx=hoop.x-carrier.x,my=hoop.y-carrier.y;
+      const ml=Math.sqrt(mx*mx+my*my)||1;
+      carrier.x+=mx/ml*1.4;carrier.y+=my/ml*1.4;
+      carrier.facing=carrier.vx>0?1:-1;
+      carrier.x=Math.max(courtLeft()+8,Math.min(courtRight()-8,carrier.x));
+      carrier.y=Math.max(courtTop()+8,Math.min(courtBot()-8,carrier.y));
+
+      if(dh<80&&aiTimer%90===0){
         ballHolder=carrier.id;
-        executeShot(Math.random()<0.55,dToHoop>courtW()*0.32);
+        const ai3pt=dh>courtW()*0.32;
+        executeShot(Math.random()<0.55,ai3pt);
         setTimeout(()=>{
-          if(shotResult==='make'){scoreBasket(is3pt?3:2);}
-          else{sfxMiss();ballBouncing=true;bounceX=ball.x;bounceY=ball.y;bounceVX=(Math.random()-.5)*4;bounceVY=-6;}
+          if(shotResult==='make'){scoreBasket(ai3pt?3:2);}
+          else{sfxMiss();ballBouncing=true;bounceX=ball.x;bounceY=ball.y;bounceVX=(Math.random()-.5)*4;bounceVY=-6;shotResult=null;}
         },ballArcDur*16+200);
-      } else if(aiTimer%60===30){
-        // AI pass
-        const mate=o1.hasBall?o2:o1;
-        ballHolder=carrier.id;
+      } else if(aiTimer%70===35&&dh>60){
+        // AI pass to teammate
         carrier.hasBall=false;
-        passInFlight=true;passTarget=mate;
+        passInFlight=true;passTarget=cutter;
         passX=carrier.x;passY=carrier.y;
-        const dx2=mate.x-carrier.x,dy2=mate.y-carrier.y;
-        const dl=Math.sqrt(dx2*dx2+dy2*dy2)||1;
-        passVX=dx2/dl*6;passVY=dy2/dl*6;
+        const pdx=cutter.x-carrier.x,pdy=cutter.y-carrier.y;
+        const pl=Math.sqrt(pdx*pdx+pdy*pdy)||1;
+        passVX=pdx/pl*7;passVY=pdy/pl*7;
       }
     }
+  } else {
+    // AI on defense — both chase ball/carrier
+    const ballP=Object.values(players).find(p=>p.hasBall)||{x:ball.x,y:ball.y};
+    [ai1,ai2].forEach((def,i)=>{
+      const tgt=i===0?ballP:(players[playerTeam+(ballP.id?.endsWith('1')?'2':'1')]||ballP);
+      const dx=tgt.x-def.x,dy=tgt.y-def.y;
+      const d=Math.sqrt(dx*dx+dy*dy)||1;
+      if(d>8){def.x+=dx/d*1.7;def.y+=dy/d*1.7;}
+      def.vx=dx/d*1.7;def.vy=dy/d*1.7;
+      def.facing=def.vx>0?1:-1;
+      def.x=Math.max(courtLeft()+8,Math.min(courtRight()-8,def.x));
+      def.y=Math.max(courtTop()+8,Math.min(courtBot()-8,def.y));
+    });
   }
 }
 
 // ---- UPDATE PLAYER (player controlled) ----
 function updatePlayerControl(){
-  if(possession!=='navy')return;
-  const p=players[ballHolder]||players['navy1'];
+  let p;
+  if(possession===playerTeam){
+    p=players[controlledPlayer];
+  } else {
+    p=players[defenseControlled];
+  }
+  if(!p)return;
+
   let jx=jDelta.x/JR,jy=jDelta.y/JR;
   const len=Math.sqrt(jx*jx+jy*jy);
   if(len>1){jx/=len;jy/=len;}
@@ -964,15 +1040,12 @@ function updatePlayerControl(){
   p.vx=jx*spd;p.vy=jy*spd;
   p.x+=p.vx;p.y+=p.vy;
   if(len>0.1)p.facing=jx>0?1:-1;
-  // Clamp to court
   p.x=Math.max(courtLeft()+8,Math.min(courtRight()-8,p.x));
   p.y=Math.max(courtTop()+8,Math.min(courtBot()-8,p.y));
 
-  // Update shoot meter position
   if(shooting){
     document.getElementById('shoot-meter-wrap').style.top=Math.max(courtTop()+10,p.y-110)+'px';
   }
-
   updateAlleyAvail();
 }
 
@@ -1117,12 +1190,24 @@ function startGame(){
   document.getElementById('tscreen').style.display='none';
   document.getElementById('escreen').style.display='none';
   score={navy:0,orange:0};streak={navy:0,orange:0};onFire={navy:false,orange:false};
-  quarter=1;clockSec=240;possession='navy';
+  quarter=1;clockSec=240;
+
+  // Randomly assign player's team
+  playerTeam=Math.random()<0.5?'navy':'orange';
+  possession='navy'; // navy always starts with ball
+
+  // Update scoreboard labels to show which is YOU
+  const navyLbl=document.getElementById('snavy').previousElementSibling;
+  const orangeLbl=document.getElementById('sorange').previousElementSibling;
+  document.querySelector('.navy-lbl').textContent=playerTeam==='navy'?'YOU (NAVY)':'NL NAVY';
+  document.querySelector('.orange-lbl').textContent=playerTeam==='orange'?'YOU (ORANGE)':'NL ORANGE';
+
   updateScoreboard();updateClock();
   initPlayers();
   clockRunning=true;gs='playing';
   sfxWhistle();
-  showFlash('TIP OFF!',80);
+  const teamMsg=playerTeam==='navy'?'YOU ARE NAVY!':'YOU ARE ORANGE!';
+  showFlash(teamMsg+' TIP OFF!',120);
 }
 
 document.getElementById('bstart').addEventListener('click',startGame);
