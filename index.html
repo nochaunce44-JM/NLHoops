@@ -1002,17 +1002,40 @@ function updateBallArc(){
   }
 }
 
+// ---- AI PLAY SYSTEM ----
+let aiPlay=null;
+let aiPlayTimer=0;
+
+function pickAIPlay(){
+  const hoop=attackHoop();
+  const ch=courtH(),cw=courtW();
+  const isLeft=hoop.x<W/2;
+  const sign=isLeft?-1:1;
+  const spots=[
+    {cx:hoop.x+sign*18,  cy:hoop.y,            make:0.72}, // layup
+    {cx:hoop.x+sign*90,  cy:hoop.y-ch*0.22,    make:0.58}, // elbow hi
+    {cx:hoop.x+sign*90,  cy:hoop.y+ch*0.22,    make:0.58}, // elbow lo
+    {cx:hoop.x+sign*cw*0.28, cy:courtTop()+ch*0.12, make:0.42}, // corner 3 hi
+    {cx:hoop.x+sign*cw*0.28, cy:courtTop()+ch*0.88, make:0.42}, // corner 3 lo
+    {cx:hoop.x+sign*cw*0.34, cy:hoop.y,         make:0.38}, // top of key
+    {cx:hoop.x+sign*cw*0.30, cy:hoop.y-ch*0.3,  make:0.40}, // wing hi
+    {cx:hoop.x+sign*cw*0.30, cy:hoop.y+ch*0.3,  make:0.40}, // wing lo
+  ];
+  const s=spots[Math.floor(Math.random()*spots.length)];
+  s.cx=Math.max(courtLeft()+12,Math.min(courtRight()-12,s.cx));
+  s.cy=Math.max(courtTop()+12,Math.min(courtBot()-12,s.cy));
+  aiPlay=s;aiPlayTimer=0;
+}
+
 // ---- AI ----
 function updateAI(){
-  if(inboundPending)return; // don't act during inbound delay
-  const aiTeam=playerTeam==='navy'?'orange':'navy'; // AI always controls the other team
-  const offTeam=possession;
+  if(inboundPending)return;
+  const aiTeam=playerTeam==='navy'?'orange':'navy';
   const hoop=attackHoop();
   aiTimer++;
 
-  // AI offensive teammate (human team's mate also gets AI movement when not ball carrier)
-  // Human team mate (not controlled) runs cuts
-  const humanMateId=playerTeam==='navy'?'navy2':'orange2';
+  // Human's off-ball teammate cuts toward hoop
+  const humanMateId=playerTeam+'2';
   const humanMate=players[humanMateId];
   if(humanMate&&humanMate.id!==controlledPlayer&&!humanMate.hasBall){
     const tx=hoop.x+(Math.sin(aiTimer*0.03)*60);
@@ -1026,56 +1049,63 @@ function updateAI(){
     humanMate.y=Math.max(courtTop()+8,Math.min(courtBot()-8,humanMate.y));
   }
 
-  // AI team both players — offense and defense
   const ai1=players[aiTeam+'1'],ai2=players[aiTeam+'2'];
 
   if(possession===aiTeam){
-    // AI on offense — one player has ball, other cuts
-    const carrier=ai1.hasBall?ai1:ai2;
+    const carrier=ai1.hasBall?ai1:(ai2.hasBall?ai2:null);
     const cutter=ai1.hasBall?ai2:ai1;
-    // Cutter runs toward hoop
-    const cx=hoop.x+(Math.sin(aiTimer*0.025)*50);
-    const cy=hoop.y+(Math.cos(aiTimer*0.03)*60);
-    const cdx=cx-cutter.x,cdy=cy-cutter.y;
+
+    if(!aiPlay||aiPlayTimer>240) pickAIPlay();
+    aiPlayTimer++;
+
+    // Cutter moves to opposite side of paint
+    const cutY=hoop.y+(carrier?(carrier.y<hoop.y?courtH()*0.25:-courtH()*0.25):0);
+    const cutX=hoop.x+(hoop.x<W/2?30:-30);
+    const cdx=cutX-cutter.x,cdy=cutY-cutter.y;
     const cd=Math.sqrt(cdx*cdx+cdy*cdy)||1;
     cutter.x+=cdx/cd*1.9;cutter.y+=cdy/cd*1.9;
-    cutter.facing=cutter.vx>0?1:-1;
+    cutter.facing=cdx>0?1:-1;
     cutter.x=Math.max(courtLeft()+8,Math.min(courtRight()-8,cutter.x));
     cutter.y=Math.max(courtTop()+8,Math.min(courtBot()-8,cutter.y));
 
-    // Carrier moves toward hoop
     if(carrier){
-      const dh=dist(carrier,hoop);
-      const mx=hoop.x-carrier.x,my=hoop.y-carrier.y;
-      const ml=Math.sqrt(mx*mx+my*my)||1;
-      carrier.x+=mx/ml*1.4;carrier.y+=my/ml*1.4;
-      carrier.facing=carrier.vx>0?1:-1;
-      carrier.x=Math.max(courtLeft()+8,Math.min(courtRight()-8,carrier.x));
-      carrier.y=Math.max(courtTop()+8,Math.min(courtBot()-8,carrier.y));
+      const dx=aiPlay.cx-carrier.x,dy=aiPlay.cy-carrier.y;
+      const d=Math.sqrt(dx*dx+dy*dy)||1;
+      const atSpot=d<20;
 
-      if(dh<80&&aiTimer%90===0&&!ballInAir&&!passInFlight&&!inboundPending){
-        ballHolder=carrier.id;
-        const ai3pt=dh>courtW()*0.32;
-        executeShot(Math.random()<0.55,ai3pt);
-        setTimeout(()=>{
-          if(shotResult==='make'){scoreBasket(ai3pt?3:2);}
-          else{sfxMiss();ballBouncing=true;bounceX=ball.x;bounceY=ball.y;bounceVX=(Math.random()-.5)*4;bounceVY=-6;shotResult=null;}
-        },ballArcDur*16+200);
-      } else if(aiTimer%70===35&&dh>60){
-        // AI pass to teammate
-        carrier.hasBall=false;
-        passInFlight=true;passTarget=cutter;
-        passX=carrier.x;passY=carrier.y;
-        const pdx=cutter.x-carrier.x,pdy=cutter.y-carrier.y;
-        const pl=Math.sqrt(pdx*pdx+pdy*pdy)||1;
-        passVX=pdx/pl*7;passVY=pdy/pl*7;
+      if(!atSpot){
+        carrier.x+=dx/d*1.6;carrier.y+=dy/d*1.6;
+        carrier.facing=dx>0?1:-1;
+        carrier.x=Math.max(courtLeft()+8,Math.min(courtRight()-8,carrier.x));
+        carrier.y=Math.max(courtTop()+8,Math.min(courtBot()-8,carrier.y));
+      } else {
+        if(aiPlayTimer>45&&aiPlayTimer%55===0&&!ballInAir&&!passInFlight&&!inboundPending){
+          ballHolder=carrier.id;
+          const dh=dist(carrier,hoop);
+          const ai3pt=dh>courtW()*0.30;
+          executeShot(Math.random()<aiPlay.make,ai3pt);
+          setTimeout(()=>{
+            if(shotResult==='make'){scoreBasket(ai3pt?3:2);}
+            else{sfxMiss();ballBouncing=true;bounceX=ball.x;bounceY=ball.y;bounceVX=(Math.random()-.5)*4;bounceVY=-7;shotResult=null;}
+          },ballArcDur*16+200);
+          aiPlay=null;
+        } else if(aiPlayTimer%90===45&&!ballInAir&&!passInFlight&&dist(cutter,hoop)<80){
+          carrier.hasBall=false;
+          passInFlight=true;passTarget=cutter;
+          passX=carrier.x;passY=carrier.y;
+          const pdx=cutter.x-carrier.x,pdy=cutter.y-carrier.y;
+          const pl=Math.sqrt(pdx*pdx+pdy*pdy)||1;
+          passVX=pdx/pl*7;passVY=pdy/pl*7;
+          aiPlay=null;
+        }
       }
     }
   } else {
-    // AI on defense — both chase ball/carrier
+    // Defense — one guards ball, other guards human's mate
     const ballP=Object.values(players).find(p=>p.hasBall)||{x:ball.x,y:ball.y};
+    const humanMate2=players[playerTeam+(ballP.id?.endsWith('1')?'2':'1')]||ballP;
     [ai1,ai2].forEach((def,i)=>{
-      const tgt=i===0?ballP:(players[playerTeam+(ballP.id?.endsWith('1')?'2':'1')]||ballP);
+      const tgt=i===0?ballP:humanMate2;
       const dx=tgt.x-def.x,dy=tgt.y-def.y;
       const d=Math.sqrt(dx*dx+dy*dy)||1;
       if(d>8){def.x+=dx/d*1.7;def.y+=dy/d*1.7;}
